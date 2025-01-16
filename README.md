@@ -24,6 +24,8 @@ Features:
 - Record data to a file
 - Save the best, last or all laps to a file
 - The location-based markers
++ Added a record replay laps function
++ Added Clear Laps Confirmation on keybind press
 
 ![SpeedBoard](doc/speedboard4.png)
 ![SpeedBoard configuration](doc/speedboardconfig4.png)
