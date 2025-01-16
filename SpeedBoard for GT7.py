@@ -42,192 +42,77 @@ import sb.components.mapce
 import sb.components.speed
 import sb.components.stats
 import sb.components.help
-import sb.components.pedals
-import sb.components.mapopt
-import sb.components.mapopting
 
-defaultLayout = [
-                    [ # Screen 1
-                        [ # Page 1
-                            { "component" : "LapHeader", "stretch" : 1},
-                            { "list" :
-                                [
-                                    { "list" :
-                                        [
-                                            { "component" : "Speed", "stretch" : 2},
-                                            { "component" : "TyreTemps", "stretch" : 1},
-                                        ], "stretch" : 1
-                                    },
-                                    { "component" : "FuelAndMessages", "stretch" : 1},
-                                ], "stretch" : 100
-                            }
-                        ],
-                        # Pages 2..
-                        { "component" : "Stats", "stretch" : 1},
-                        { "component" : "Help", "stretch" : 1},
-                        { "component" : "Map", "stretch" : 1},
-                    ],
-                    #[ # Screen 2
-                        #{ "component" : "Map", "stretch" : 1},
-                    #]
-                ]
 
-#j = json.dumps(defaultLayout, indent = 4)
-#with open("defaultLayout.json", "w") as jf:
-    #jf.write(j)
-
-circuitExperienceLayout = [
-                    [ # Screen 1
-                        [ # Page 1
-                            { "component" : "LapHeader", "stretch" : 1},
-                            { "list" :
-                                [
-                                    { "list" :
-                                        [
-                                            { "component" : "Speed", "stretch" : 2},
-                                            { "component" : "TyreTemps", "stretch" : 1},
-                                        ], "stretch" : 1
-                                    },
-                                    { "component" : "Map", "stretch" : 1},
-                                ], "stretch" : 100
-                            }
-                        ],
-                        # Pages 2..
-                        { "component" : "Stats", "stretch" : 1},
-                        { "component" : "Help", "stretch" : 1},
-                    ],
-                ]
-
-class Screen(QStackedWidget):
-    def __init__(self, keyRedirect):
-        super().__init__()
-        self.keyRedirect = keyRedirect
-
-    def keyPressEvent(self, e):
-        self.keyRedirect.keyPressEvent(e)
-
-class MainWindow(ColorMainWidget):
+class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.cfg = sb.configuration.Configuration()
-        self.cfg.developmentMode = False
 
         self.defaultPalette = self.palette()
 
         loadCarIds()
 
-        self.components = []
-
         self.trackDetector = None
         self.goFullscreen = True
 
         self.masterWidget = None
+        self.masterWidgetIndex = 0
         self.cfg.loadConstants()
         self.threadpool = QThreadPool()
 
-        self.startWindow = StartWindow(True)
+        self.startWindow = StartWindow()
         self.startWindow.starter.clicked.connect(self.startDash)
         self.startWindow.ip.returnPressed.connect(self.startDash)
 
-        self.setWindowTitle("SpeedBoard for GT7 (v7)")
+        self.setWindowTitle("SpeedBoard for GT7 (v6)")
         self.queue = queue.Queue()
         self.receiver = None
         self.isRecording = False
 
         self.newMessage = None
         self.messages = []
-        self.messageWaitsForKey = False
 
         self.setCentralWidget(self.startWindow)
 
-        logPrint("new optimizing lap")
         self.curOptimizingLap = Lap()
 
-    def loadLayout(self, fn):
-        global defaultLayout
-        with open(fn, "r") as f:
-            txt = f.read()
-            defaultLayout = json.loads(txt)
-
-    def createComponent(self, name):
-        newComponent = sb.component.componentLibrary[name](self.cfg, self)
-        self.components.append(newComponent)
-        title = newComponent.title()
-        widget = None
-        if title is None:
-            print("New component:", name)
-            widget = newComponent.getWidget()
-        else:
-            print("New component:", title)
-            widget = newComponent.getTitledWidget(newComponent.title())
-        widget.installEventFilter(sb.component.KeyboardFilter())
-        return widget
-
-    def makeDashEntry(self, e, horizontal = True):
-        page = QWidget()
-        if horizontal:
-            layout = QHBoxLayout()
-        else:
-            layout = QVBoxLayout()
-        layout.setContentsMargins(0,0,0,0)
-        page.setLayout(layout)
-        if "list" in e:
-            for c in e['list']:
-                w = self.makeDashEntry(c, not horizontal)
-                layout.addWidget(w[0], w[1])
-        elif "component" in e:
-            print(e['component'])
-            layout.addWidget (self.createComponent(e['component']))
-        return [page, e['stretch']]
-
-    def makeDashPage(self, e):
-        page = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0,0,0,0)
-        page.setLayout(layout)
-        if isinstance(e, list):
-            print("Page with multiple components")
-            for c in e:
-                w = self.makeDashEntry(c)
-                layout.addWidget(w[0], w[1])
-        elif isinstance(e, dict):
-            print("Page:", e['component'])
-            layout.addWidget (self.createComponent(e['component']))
-        return page
-
-
-    def makeDashScreen(self, e):
-        print("Screen")
-        screen = Screen(self)
-        for c in e:
-            screen.addWidget(self.makeDashPage(c))
-        return screen
-
-    def makeDashFromSpec(self, spec):
-        screens = []
-        for c in spec:
-            screens.append(self.makeDashScreen(c))
-        return screens
-        
 
     def makeDashWidget(self):
         self.components = []
 
         if self.cfg.circuitExperience:
-            self.specWidgets = self.makeDashFromSpec(circuitExperienceLayout)
+            mapCEComponent = sb.components.mapce.Map(self.cfg, self)
+            self.components.append(mapCEComponent)
+            mapViewCEWidget, mapViewHeader, self.mapViewCE = mapCEComponent.getTitledWidget("Map")
         else:
-            self.specWidgets = self.makeDashFromSpec(defaultLayout)
+            fuelComponent = sb.components.fuelandmessages.FuelAndMessages(self.cfg, self)
+            self.components.append(fuelComponent)
+            fuelWidget = fuelComponent.getTitledWidget("Fuel")[0]
 
-        i = 1
-        for s in self.specWidgets:
-            s.setWindowTitle("SpeedBoard for GT7 - Screen " + str(i))
-            i += 1
-            s.show()
+        tyreComponent = sb.components.tyretemps.TyreTemps(self.cfg, self)
+        self.components.append(tyreComponent)
+        tyreWidget = tyreComponent.getTitledWidget("Tyres")[0]
+
+        speedComponent = sb.components.speed.Speed(self.cfg, self)
+        self.components.append(speedComponent)
+        speedWidget, self.headerSpeed, speedWidgetLone = speedComponent.getTitledWidget(speedComponent.title())
+
+        headerComponent = sb.components.lapheader.LapHeader(self.cfg, self)
+        self.components.append(headerComponent)
+        self.header = headerComponent.getWidget()
+
+        helpComponent = sb.components.help.Help(self.cfg, self)
+        self.components.append(helpComponent)
+        self.help = helpComponent.getWidget()
 
         # Lvl 1
+        masterLayout = QGridLayout()
         self.masterWidget = QStackedWidget()
+        self.dashWidget = QWidget()
+        self.masterWidget.addWidget(self.dashWidget)
 
-        uiMsgPageScroller = QScrollArea()
+        self.uiMsgPageScroller = QScrollArea()
         self.uiMsg = QLabel("Welcome to Speedboard for GT7")
         self.uiMsg.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.uiMsg.setAutoFillBackground(True)
@@ -239,21 +124,47 @@ class MainWindow(ColorMainWidget):
         pal.setColor(self.uiMsg.foregroundRole(), self.cfg.foregroundColor)
         self.uiMsg.setPalette(pal)
 
-        uiMsgPageScroller.setWidget(self.uiMsg)
-        uiMsgPageScroller.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
-        uiMsgPageScroller.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        uiMsgPageScroller.setWidgetResizable(True)
+        self.uiMsgPageScroller.setWidget(self.uiMsg)
+        self.uiMsgPageScroller.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
+        self.uiMsgPageScroller.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.uiMsgPageScroller.setWidgetResizable(True)
 
-        self.masterWidget.addWidget(self.specWidgets[0])
-        self.masterWidget.addWidget(uiMsgPageScroller)
+        self.statsComponent = sb.components.stats.Stats(self.cfg, self)
+        self.components.append(self.statsComponent)
+        self.statsPageScroller = self.statsComponent.getWidget()
+
+        self.masterWidget.addWidget(self.uiMsgPageScroller)
+        self.masterWidget.addWidget(self.statsPageScroller)
+        self.masterWidget.addWidget(self.help)
+
+        if not self.cfg.circuitExperience:
+            mapComponent = sb.components.mapce.Map(self.cfg, self)
+            self.components.append(mapComponent)
+            mapViewWidget, mapViewHeader, self.mapView = mapComponent.getTitledWidget("Map")
+            self.masterWidget.addWidget(mapViewWidget)
+
+        self.dashWidget.setLayout(masterLayout)
+
+        masterLayout.setColumnStretch(0, 1)
+        masterLayout.setColumnStretch(1, 1)
+        masterLayout.setRowStretch(0, 1)
+        masterLayout.setRowStretch(1, 11)
+        masterLayout.setRowStretch(2, 5)
+        masterLayout.addWidget(self.header, 0, 0, 1, 2)
+        if self.cfg.circuitExperience:
+            masterLayout.addWidget(mapViewCEWidget, 1, 1, 3, 1)
+        else:
+            masterLayout.addWidget(fuelWidget, 1, 1, 3, 1)
+
+        masterLayout.addWidget(tyreWidget, 2, 0, 1, 1)
+
+        masterLayout.addWidget(speedWidget, 1, 0, 1, 1)
 
         pal = self.palette()
         pal.setColor(self.backgroundRole(), self.cfg.brightBackgroundColor)
         self.setPalette(pal)
 
     def startDash(self):
-        self.lastPointTimeStamp = time.perf_counter()
-        self.congestion = None
         self.cfg.circuitExperience = self.startWindow.mode.currentIndex() == 1
 
         if self.cfg.circuitExperience:
@@ -289,7 +200,6 @@ class MainWindow(ColorMainWidget):
         saveSessionName = self.startWindow.saveSessionName.isChecked()
         self.cfg.storageLocation = self.startWindow.storageLocation
         
-        self.cfg.speedcomp = self.startWindow.speedcomp.isChecked()
         self.cfg.linecomp = self.startWindow.linecomp.isChecked()
         self.cfg.timecomp = self.startWindow.timecomp.isChecked()
         self.cfg.loadMessagesFromFile = self.startWindow.cbCaution.isChecked()
@@ -363,7 +273,6 @@ class MainWindow(ColorMainWidget):
             settings.setValue("sessionName", "")
         settings.setValue("storageLocation", self.cfg.storageLocation)
 
-        settings.setValue("speedcomp", self.cfg.speedcomp)
         settings.setValue("linecomp", self.cfg.linecomp)
         settings.setValue("timecomp", self.cfg.timecomp)
         settings.setValue("loadMessagesFromFile", self.cfg.loadMessagesFromFile)
@@ -389,11 +298,8 @@ class MainWindow(ColorMainWidget):
 
         self.refLaps = [ loadLap(self.cfg.refAFile), loadLap(self.cfg.refBFile), loadLap(self.cfg.refCFile) ]
         self.curLap = Lap()
-        self.curLapInvalidated = False
 
-        self.newSession()
-        self.newRunDescription = None
-
+        self.initRace()
         self.messageWaitsForKey = False
 
         self.receiver = tele.GT7TelemetryReceiver(ip)
@@ -405,9 +311,6 @@ class MainWindow(ColorMainWidget):
         if self.goFullscreen:
             self.showFullScreen()
         self.showUiMsg("Press ESC to return to the settings", 2)
-
-        if self.cfg.developmentMode:
-            self.toggleRecording()
 
         self.trackDetector = TrackDetector()
         self.trackPreviouslyIdentified = "Unknown Track"
@@ -423,9 +326,50 @@ class MainWindow(ColorMainWidget):
 
         self.noThrottleCount = 0
 
+        self.cfg.replayMode = self.startWindow.replayMode.isChecked()
+        
+        settings = QSettings()
+        settings.setValue("replayMode", self.cfg.replayMode)
+
+    def initOptimizedLap(self):
+        if self.cfg.optimizedSeed == 0:
+            self.optimizedLap = Lap()
+        elif self.cfg.optimizedSeed == 1:
+            self.optimizedLap = copy.deepcopy(self.refLaps[0])
+        elif self.cfg.optimizedSeed == 2:
+            self.optimizedLap = copy.deepcopy(self.refLaps[1])
+        elif self.cfg.optimizedSeed == 3:
+            self.optimizedLap = copy.deepcopy(self.refLaps[2])
+        logPrint("discard", len(self.curOptimizingLap.points))
+        self.curOptimizingLap = Lap()
+        self.curOptimizingIndex = 0
+        self.curOptimizingLiveIndex = 0
+        self.curOptimizingBrake = False
+
+    def showUiMsg(self, msg, t, leftAlign=False, waitForKey=False):
+        logPrint("showUiMsg")
+        self.uiMsg.setText(msg)
+        if leftAlign:
+            self.uiMsg.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            self.uiMsg.setMargin(15)
+        else:
+            self.uiMsg.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.uiMsg.setMargin(0)
+        self.masterWidget.setCurrentIndex(1)
+        if waitForKey:
+            self.messageWaitsForKey = True
+        else:
+            self.messageWaitsForKey = False
+            self.returnTimer = QTimer()
+            self.returnTimer.setInterval(int(1000 * t))
+            self.returnTimer.setSingleShot(True)
+            self.returnTimer.timeout.connect(self.returnToDash)
+            self.returnTimer.start()
+
+
     def returnToDash(self):
         if self.centralWidget() == self.masterWidget:
-            self.masterWidget.setCurrentIndex(0)
+            self.flipPage(self.masterWidgetIndex)
 
     def stopDash(self):
         if not self.trackDetector is None:
@@ -442,25 +386,13 @@ class MainWindow(ColorMainWidget):
             while not self.queue.empty():
                 self.queue.get_nowait()
             self.receiver = None
-        for c in self.components:
-            c.stop()
 
-        for s in range (1, len(self.specWidgets)):
-            self.specWidgets[s].close()
+    def initRace(self):
 
-    def exitDash(self):
-        if self.isRecording:
-            self.isRecording = False
-            self.receiver.stopRecording()
-        self.stopDash()
-        self.showNormal()
-        self.startWindow = StartWindow(False)
-        self.startWindow.starter.clicked.connect(self.startDash)
-        self.startWindow.ip.returnPressed.connect(self.startDash)
-        self.setPalette(self.defaultPalette)
-        self.setCentralWidget(self.startWindow)
-
-    def newSession(self):
+        if self.brakeOffset != 0:
+            self.headerSpeed.setText("[" + str(round(self.brakeOffset/-60, 2)) + "] SPEED")
+        else:
+            self.headerSpeed.setText("SPEED")
 
         logPrint("INIT RACE")
         self.newMessage = None
@@ -469,12 +401,13 @@ class MainWindow(ColorMainWidget):
         self.lastFuelUsage = []
         self.fuelFactor = 0
         self.refueled = 0
-        logPrint("PIT STOP:", self.refueled)
         self.manualPitStop = False
         
         self.initOptimizedLap()
 
         self.cfg.bigCountdownBrakepoint = self.cfg.initialBigCountdownBrakepoint
+
+        self.newRunDescription = None
 
         self.previousPoint = None
 
@@ -483,7 +416,16 @@ class MainWindow(ColorMainWidget):
         self.medianLap = -1
 
         for c in self.components:
-            c.newSession()
+            c.initRace()
+
+#        if self.cfg.circuitExperience:
+#            self.mapViewCE.clear() # TODO component API
+#            self.mapViewCE.update()
+#        else:
+#            self.mapView.clear() # TODO component API
+#            for p in range(1,len(self.curLap.points)):
+#                self.mapView.setPoints(self.curLap.points[p-1], self.curLap.points[p])
+#            self.mapView.update()
 
         self.loadMessages(self.cfg.messageFile)
 
@@ -493,7 +435,6 @@ class MainWindow(ColorMainWidget):
         if not self.curLap is None and len(self.curLap.points) > 1:
             logPrint(" Old lap:", len(self.curLap.points))#, self.curLap.distance(self.curLap.points[0], self.curLap.points[-1]), "m")
         self.curLap = Lap()
-        self.curLapInvalidated = False
         self.closestILast = 0
         self.closestIBest = 0
         self.closestIMedian = 0
@@ -560,6 +501,12 @@ class MainWindow(ColorMainWidget):
             if lap[i].brake > self.cfg.brakeMinimumLevel:
                 return max(i-startI,0)
         return None
+
+    #def getLapLength(self, lap):
+        #totalDist = 0
+        #for i in range(1, len(lap)):
+            #totalDist += self.distance(lap[i-1], lap[i])
+        #return totalDist
 
     def purgeBadLapsCE(self):
         logPrint("PURGE laps")
@@ -656,7 +603,7 @@ class MainWindow(ColorMainWidget):
                 self.trackPreviouslyIdentified = curTrack
                 tempLap = self.lastLap
                 tempMsg = self.messages
-                self.newSession()
+                self.initRace()
                 self.lastLap = tempLap
                 self.messages = tempMsg
 
@@ -711,25 +658,9 @@ class MainWindow(ColorMainWidget):
         elif tp != -1:
             self.lapProgress = tp
 
-    def initOptimizedLap(self):
-        if self.cfg.optimizedSeed == 0:
-            self.optimizedLap = Lap()
-        elif self.cfg.optimizedSeed == 1:
-            self.optimizedLap = copy.deepcopy(self.refLaps[0])
-        elif self.cfg.optimizedSeed == 2:
-            self.optimizedLap = copy.deepcopy(self.refLaps[1])
-        elif self.cfg.optimizedSeed == 3:
-            self.optimizedLap = copy.deepcopy(self.refLaps[2])
-        logPrint("discard", len(self.curOptimizingLap.points))
-        logPrint("new optimizing lap")
-        self.curOptimizingLap = Lap()
-        self.curOptimizingIndex = 0
-        self.curOptimizingLiveIndex = 0
-        self.curOptimizingBrake = False
-
     def optimizeLap(self, curPoint):
         if len(self.optimizedLap.points) == 0:
-            self.curOptimizingLap.points.append(copy.deepcopy(curPoint))
+            self.curOptimizingLap.points.append(curPoint)
             if len(self.curOptimizingLap.points) != len(self.curLap.points):
                 self.curOptimizingLap.points = copy.deepcopy(self.curLap.points)
             self.curOptimizingLiveIndex = len(self.curLap.points)
@@ -743,8 +674,8 @@ class MainWindow(ColorMainWidget):
                     lenOpt = self.closestIOptimized - self.curOptimizingIndex
                     lenLive = len(self.curLap.points) - self.curOptimizingLiveIndex
                     if lenOpt > lenLive or lenOpt == 0:
-                        logPrint("Current segment was faster", lenOpt, lenLive, self.closestIOptimized, self.curOptimizingIndex, self.curOptimizingLiveIndex, len(self.curOptimizingLap.points), len(self.curLap.points))
-                        self.curOptimizingLap.points += copy.deepcopy(self.curLap.points[self.curOptimizingLiveIndex:-1])
+                        logPrint("Current segment was faster", lenOpt, lenLive, self.closestIOptimized, self.curOptimizingIndex, self.curOptimizingLiveIndex)
+                        self.curOptimizingLap.points += self.curLap.points[self.curOptimizingLiveIndex:-1]
                     else:
                         logPrint("Previous segment was faster", lenOpt, lenLive, self.closestIOptimized, self.curOptimizingIndex, self.curOptimizingLiveIndex)
                         self.curOptimizingLap.points += self.optimizedLap.points[self.curOptimizingIndex:self.closestIOptimized-1]
@@ -759,32 +690,32 @@ class MainWindow(ColorMainWidget):
         lenLive = len(self.curLap.points) - self.curOptimizingLiveIndex
         if lenOpt > lenLive or lenOpt == 0:
             logPrint("Current final segment was faster", lenOpt, lenLive, self.closestIOptimized, self.curOptimizingIndex, self.curOptimizingLiveIndex)
-            self.curOptimizingLap.points += copy.deepcopy(self.curLap.points[self.curOptimizingLiveIndex:])
+            self.curOptimizingLap.points += self.curLap.points[self.curOptimizingLiveIndex:]
         else:
             logPrint("Previous final segment was faster", lenOpt, lenLive, self.closestIOptimized, self.curOptimizingIndex, self.curOptimizingLiveIndex)
-            self.curOptimizingLap.points += copy.deepcopy(self.optimizedLap.points[self.curOptimizingIndex:])
+            self.curOptimizingLap.points += self.optimizedLap.points[self.curOptimizingIndex:]
         self.optimizedLap = self.curOptimizingLap
-        if self.cfg.developmentMode:
-            saveThread = Worker(self.appendOptimizedLap, "Optimized lap saved.", 1.0, (self.optimizedLap, "optimized",))
-            self.threadpool.start(saveThread)
         logPrint("Optimized lap:", len(self.optimizedLap.points), "points vs.", len(self.curLap.points))
-        logPrint("new optimizing lap")
         self.curOptimizingLap = Lap()
         self.curOptimizingLiveIndex = 0
         self.curOptimizingIndex = 0
         self.curOptimizingBrake = False
 
-    def checkCircuitExperienceMode(self, curPoint):
+    def handleLapChanges(self, curPoint):
         if self.cfg.circuitExperience and curPoint.current_lap > 1:
             logPrint("Not in Circuit Experience!")
             self.exitDash()
             QMessageBox.critical(self, "Not in Circuit Experience", "Circuit Experience mode is set, but not driven. Unfortunately, this is not supported. Please switch to Laps mode or drive a Circuit Experience.")
+            return True
 
-    def handleLapChanges(self, curPoint):
+        fuel_capacity = curPoint.fuel_capacity
+        if fuel_capacity == 0: # EV
+            fuel_capacity = 100
+
         if (
             self.lastLap != curPoint.current_lap
             or (self.cfg.circuitExperience and (curPoint.distance(self.previousPoint) > self.cfg.circuitExperienceJumpDistance or self.noThrottleCount >= self.cfg.psFPS * self.cfg.circuitExperienceNoThrottleTimeout))
-           ): # TODO Null error in circuit experience mode when doing laps: AttributeError: 'NoneType' object has no attribute 'position_x'
+           ):
 
             # Clean up circuit experience laps
             if self.cfg.circuitExperience:
@@ -792,9 +723,14 @@ class MainWindow(ColorMainWidget):
                     logPrint("Lap ended", self.cfg.circuitExperienceNoThrottleTimeout ,"seconds ago")
 
                 cleanLap = self.cleanUpLapCE(self.curLap)
+                if curPoint.current_lap != 0:
+                    self.mapViewCE.endLap()
+                self.mapViewCE.update()
             else:
                 cleanLap = self.curLap
-                    
+                self.mapView.endLap()
+                self.mapView.update()
+
             lapLen = cleanLap.length()
             
             if lapLen == 0:
@@ -806,22 +742,39 @@ class MainWindow(ColorMainWidget):
             else:
                 logPrint("Track Detect Data:", self.trackDetector.totalPoints)
                 logPrint("LAP CHANGE", self.lastLap, curPoint.current_lap, str(round(lapLen, 3)) + " m", indexToTime(len (cleanLap.points)))
+                if curPoint.current_lap == 1 or self.lastLap >= curPoint.current_lap:
+                    logPrint("lap is 1 -> init")
+                    self.statsComponent.initRun()
+
+            # Update live stats
+            self.statsComponent.updateLiveStats(curPoint)
 
             if not (self.lastLap == -1 and curPoint.current_fuel < 99):
                 if self.lastLap > 0 and ((self.cfg.circuitExperience and lapLen > 0) or curPoint.last_lap != -1):
                     # Determine lap time
-                    if self.cfg.circuitExperience:
-                        lastLapTime = 1000 * (len(cleanLap.points)/self.cfg.psFPS + 1/(2*self.cfg.psFPS)) # TODO use helper function
+                    if self.cfg.circuitExperience or (self.cfg.replayMode and curPoint.last_lap == -1):
+                        # Use frame count for timing in replay mode if last_lap is not available
+                        lastLapTime = 1000 * (len(cleanLap.points)/self.cfg.psFPS + 1/(2*self.cfg.psFPS))
                     else:
                         lastLapTime = curPoint.last_lap
 
                     showBestLapMessage = True
 
-                    logPrint("Closed loop distance:", cleanLap.points[0].distance(cleanLap.points[-1]), "vs.", self.cfg.validLapEndpointDistance, self.curLapInvalidated) 
-                    # Process a completed valid lap (circuit experience laps are always valid)
-                    if self.cfg.circuitExperience or cleanLap.points[0].distance(cleanLap.points[-1]) < self.cfg.validLapEndpointDistance and not self.curLapInvalidated:
+                    logPrint("Closed loop distance:", cleanLap.points[0].distance(cleanLap.points[-1])) 
+                    # Process a completed valid lap (circuit experience laps and replay laps are always valid)
+                    if self.cfg.circuitExperience or self.cfg.replayMode or cleanLap.points[0].distance(cleanLap.points[-1]) < self.cfg.validLapEndpointDistance:
+                        # Ensure proper lap boundaries for replay mode
                         if len(self.previousLaps) > 0:
-                            self.previousLaps.append(Lap(lastLapTime, cleanLap.points, True, following=curPoint, preceeding=self.previousLaps[-1].points[-1]))
+                            # In replay mode, we need to be more careful about lap boundaries
+                            if self.cfg.replayMode:
+                                # Check if we have a clean lap transition
+                                if abs(cleanLap.points[0].current_lap - self.previousLaps[-1].points[-1].current_lap) == 1:
+                                    self.previousLaps.append(Lap(lastLapTime, cleanLap.points, True, following=curPoint, preceeding=self.previousLaps[-1].points[-1]))
+                                else:
+                                    # If lap transition is not clean, don't use preceeding point
+                                    self.previousLaps.append(Lap(lastLapTime, cleanLap.points, True, following=curPoint))
+                            else:
+                                self.previousLaps.append(Lap(lastLapTime, cleanLap.points, True, following=curPoint, preceeding=self.previousLaps[-1].points[-1]))
                         else:
                             self.previousLaps.append(Lap(lastLapTime, cleanLap.points, True, following=curPoint))
 
@@ -835,8 +788,7 @@ class MainWindow(ColorMainWidget):
                             self.updateOptimizedLap()
 
                         for c in self.components:
-                            c.completedLap(curPoint, cleanLap, True)
-
+                            c.newLap(curPoint, cleanLap)
 
                     else: # Incomplete laps are sometimes useful, but can't be used for everything
                         logPrint("Append invalid lap", msToTime(lastLapTime), indexToTime(len(cleanLap.points)), lastLapTime, len(self.previousLaps))
@@ -844,9 +796,6 @@ class MainWindow(ColorMainWidget):
                             self.previousLaps.append(Lap(lastLapTime, cleanLap.points, False, following=curPoint, preceeding=self.previousLaps[-1].points[-1]))
                         else:
                             self.previousLaps.append(Lap(lastLapTime, cleanLap.points, False, following=curPoint))
-
-                        for c in self.components:
-                            c.completedLap(curPoint, self.previousLaps[-1], False)
 
                     logPrint("Laps:", len(self.previousLaps))
 
@@ -863,6 +812,8 @@ class MainWindow(ColorMainWidget):
                     ## Reset brake point offsets for new best lap
                     if self.bestLap != newBestLap and self.cfg.bigCountdownBrakepoint == 1:
                         self.brakeOffset = 0
+                        self.headerSpeed.setText("SPEED")
+                        self.headerSpeed.update()
                     self.bestLap = newBestLap
                     self.medianLap = self.findMedianLap()
 
@@ -873,10 +824,6 @@ class MainWindow(ColorMainWidget):
                     logPrint("Last lap:", len(self.previousLaps)-1, msToTime (self.previousLaps[-1].time))
 
                     # Update fuel usage and outlook
-                    fuel_capacity = curPoint.fuel_capacity
-                    if fuel_capacity == 0: # EV
-                        fuel_capacity = 100
-
                     fuelDiff = self.lastFuel - curPoint.current_fuel/fuel_capacity
                     if fuelDiff > 0 and self.previousLaps[-1].valid:
                         logPrint("Append fuel", fuelDiff)
@@ -884,7 +831,6 @@ class MainWindow(ColorMainWidget):
                     if len(self.lastFuelUsage) > self.cfg.fuelStatisticsLaps:
                         self.lastFuelUsage = self.lastFuelUsage[1:]
                     self.refueled += 1
-                    logPrint("PIT STOP:", self.refueled)
                     self.lastFuel = curPoint.current_fuel/fuel_capacity
     
                     if len(self.lastFuelUsage) > 0:
@@ -897,8 +843,10 @@ class MainWindow(ColorMainWidget):
                     self.lastFuel = 1
                     self.resetCurrentLapData()
 
+                # Update live stats
+                self.statsComponent.updateLiveStats(curPoint)
+
             self.lastLap = curPoint.current_lap
-            logPrint("new optimizing lap")
             self.curOptimizingLap = Lap()
             self.curOptimizingIndex = 0
             self.curOptimizingLiveIndex = 0
@@ -906,35 +854,6 @@ class MainWindow(ColorMainWidget):
             logPrint("Fuel", self.fuelFactor, self.lastFuel, self.lastFuelUsage)
             return True
         return False
-
-    def checkPitStop(self, curPoint):
-        if self.previousPoint is None:
-            logPrint("FIRST")
-        if not self.previousPoint is None and curPoint.distance(self.previousPoint) > 10.0: # TODO const
-            self.curLapInvalidated = True
-            logPrint ("JUMP by", curPoint.distance(self.previousPoint), "to", curPoint.position_x, " / ", curPoint.position_z, " laps ", self.previousPoint.current_lap, curPoint.current_lap, "driving", curPoint.car_speed, "km/h")
-            if curPoint.current_lap <= 0:
-                self.refueled = 0
-                logPrint("PIT STOP:", self.refueled)
-                if self.lapProgress > 0.5:
-                    self.refueled -= 1
-                    logPrint("PIT STOP:", self.refueled)
-                for c in self.components:
-                    c.leftCircuit()
-            elif (curPoint.current_lap == self.previousPoint.current_lap or curPoint.current_lap-1 == self.previousPoint.current_lap) and curPoint.car_speed > 0.001:
-                # TODO difference to reaet to track: Standing time?
-                self.refueled = 0
-                logPrint("PIT STOP:", self.refueled)
-                if self.lapProgress > 0.5:
-                    self.refueled -= 1
-                    logPrint("PIT STOP:", self.refueled)
-                for c in self.components:
-                    c.pitStop()
-            elif curPoint.current_lap == self.previousPoint.current_lap and curPoint.car_speed < 0.1:
-                logPrint("RESET TO TRACK", curPoint.current_lap, self.previousPoint.current_lap, curPoint.car_speed)
-            else:
-                logPrint("WARNING: Unknown jump constellation")
-
 
     def updateDisplay(self):
         # Grab all new telemetry packages
@@ -965,18 +884,18 @@ class MainWindow(ColorMainWidget):
             pointsToHandle.append(newPoint)
 
             # Handle telemetry
-            lenPointsToHandle = len(pointsToHandle)
-            for i, curPoint in zip (range(lenPointsToHandle), pointsToHandle):
-                # Only handle packages when driving
-                if curPoint.is_paused or not curPoint.in_race: # TODO detect replay and allow storing laps from it
-                    loadCarIds()
-                    continue
+            for curPoint in pointsToHandle:
+                # Update local messages
+                if self.cfg.messagesEnabled and not self.newMessage is None:
+                    self.messages.append([self.curLap.points[-min(int(self.cfg.psFPS*self.cfg.messageAdvanceTime),len(self.curLap.points)-1)], self.newMessage])
+                    self.newMessage = None
 
-                self.checkCircuitExperienceMode(curPoint)
+                # Only handle packages when driving or in replay mode
+                if curPoint.is_paused or (not curPoint.in_race and not self.cfg.replayMode): # Allow storing laps from replays when in replay mode
+                    continue
 
                 self.determineLapProgress(curPoint)
                 isNewLap = self.handleLapChanges(curPoint)
-                self.checkPitStop(curPoint)
  
                 if not self.cfg.circuitExperience:
                     self.optimizeLap(curPoint)
@@ -989,18 +908,6 @@ class MainWindow(ColorMainWidget):
                 self.previousPoint = curPoint
                 self.curLap.points.append(curPoint)
 
-                qs = self.queue.qsize()
-                newPointTimeStamp = time.perf_counter()
-                #logPrint(round(1000*(newPointTimeStamp-self.lastPointTimeStamp),2))
-                dt = round(1000*(newPointTimeStamp-self.lastPointTimeStamp),2)
-                if qs>1 and dt > 2000 / self.cfg.psFPS:
-                    self.congestion = newPointTimeStamp
-                    logPrint("Telemetry data congestion:", qs, dt, "LATENCY:", round(qs * 1000/self.cfg.psFPS, 2), "ms @" + str(self.cfg.psFPS), "FPS")
-                elif not self.congestion is None and qs <= 1:
-                    logPrint("Congestion resolved after", round(1000*(newPointTimeStamp-self.congestion),2), "ms")
-                    self.congestion = None
-                self.lastPointTimeStamp = newPointTimeStamp
-
 
     def closeEvent(self, event):
         self.stopDash()
@@ -1008,7 +915,7 @@ class MainWindow(ColorMainWidget):
 
 
     def toggleRecording(self):
-        if self.cfg.recordingEnabled or self.cfg.developmentMode:
+        if self.cfg.recordingEnabled:
             if self.isRecording:
                 self.isRecording = False
                 self.receiver.stopRecording()
@@ -1019,8 +926,40 @@ class MainWindow(ColorMainWidget):
                 prefix = self.cfg.storageLocation + "/"
                 if len(self.cfg.sessionName) > 0:
                     prefix += self.cfg.sessionName + "-"
-                self.receiver.startRecording(prefix, not self.cfg.developmentMode)
+                self.receiver.startRecording(prefix)
                 self.isRecording = True
+
+    def exitDash(self):
+        if self.isRecording:
+            self.isRecording = False
+            self.receiver.stopRecording()
+        self.stopDash()
+        self.showNormal()
+        self.startWindow = StartWindow()
+        self.startWindow.starter.clicked.connect(self.startDash)
+        self.startWindow.ip.returnPressed.connect(self.startDash)
+        self.setPalette(self.defaultPalette)
+        self.setCentralWidget(self.startWindow)
+
+    def cycleBigCountdownBreakponts(self):
+        self.cfg.bigCountdownBrakepoint += 1
+        hit = False
+        while not hit:
+            if self.cfg.bigCountdownBrakepoint > 5:
+                self.cfg.bigCountdownBrakepoint = 0
+                hit = True
+            elif self.cfg.bigCountdownBrakepoint == 1 and self.cfg.showBestLap:
+                hit = True
+            elif self.cfg.bigCountdownBrakepoint == 2 and self.cfg.showRefALap:
+                hit = True
+            elif self.cfg.bigCountdownBrakepoint == 3 and self.cfg.showRefBLap:
+                hit = True
+            elif self.cfg.bigCountdownBrakepoint == 4 and self.cfg.showRefCLap:
+                hit = True
+            elif self.cfg.bigCountdownBrakepoint == 5 and self.cfg.showOptimalLap:
+                hit = True
+            else:
+                self.cfg.bigCountdownBrakepoint += 1
 
     def keyPressEvent(self, e):
         if self.centralWidget() == self.masterWidget and self.messageWaitsForKey:
@@ -1034,6 +973,8 @@ class MainWindow(ColorMainWidget):
                 self.exitDash()
             elif e.key() == Qt.Key.Key_Space.value:
                 self.newMessage = "CAUTION"
+            elif e.key() == Qt.Key.Key_Tab.value:
+                self.cycleBigCountdownBreakponts()
             elif e.key() == Qt.Key.Key_B.value:
                 if self.bestLap >= 0:
                     saveThread = Worker(self.saveLap, "Best lap saved.", 1.0, (self.bestLap, "best",))
@@ -1069,89 +1010,71 @@ class MainWindow(ColorMainWidget):
                 if ok:
                     self.newRunDescription = text
             elif e.key() == Qt.Key.Key_C.value:
-                self.newSession()
+                reply = QMessageBox.question(self, 'Clear Laps', 'Are you sure you want to clear all lap data?', 
+                                          QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, 
+                                          QMessageBox.StandardButton.No)
+                if reply == QMessageBox.StandardButton.Yes:
+                    self.initRace()
             elif e.key() == Qt.Key.Key_P.value:
                 self.manualPitStop = True
                 self.refueled = 0
-                logPrint("PIT STOP:", self.refueled)
                 if self.lapProgress > 0.5:
                     self.refueled -= 1
-                    logPrint("PIT STOP:", self.refueled)
             elif e.key() == Qt.Key.Key_0.value:
                 self.brakeOffset = 0
                 logPrint("Brake offset", self.brakeOffset)
-            elif e.key() == Qt.Key.Key_Plus.value or e.key() == Qt.Key.Key_Equal.value:
+                self.headerSpeed.setText("SPEED")
+                self.headerSpeed.update()
+            elif e.key() == Qt.Key.Key_Plus.value:
                 self.lapOffset += 1
             elif e.key() == Qt.Key.Key_Minus.value:
                 self.lapOffset -= 1
             elif e.key() == Qt.Key.Key_Up.value:
                 self.brakeOffset -= 3
                 logPrint("Brake offset", self.brakeOffset)
+                if self.brakeOffset != 0:
+                    self.headerSpeed.setText("[" + str(round(self.brakeOffset/-60, 2)) + "] SPEED")
+                else:
+                    self.headerSpeed.setText("SPEED")
+                self.headerSpeed.update()
             elif e.key() == Qt.Key.Key_Down.value:
                 self.brakeOffset += 3
                 logPrint("Brake offset", self.brakeOffset)
-            elif e.key() == Qt.Key.Key_Left.value:
-                 cur = self.specWidgets[0].currentIndex()
-                 if cur == 0:
-                     self.specWidgets[0].setCurrentIndex(self.specWidgets[0].count()-1)
-                 else:
-                     self.specWidgets[0].setCurrentIndex(cur-1)
-            elif e.key() == Qt.Key.Key_Right.value:
-                 cur = self.specWidgets[0].currentIndex()
-                 if cur == self.specWidgets[0].count() - 1:
-                     self.specWidgets[0].setCurrentIndex(0)
-                 else:
-                     self.specWidgets[0].setCurrentIndex(cur+1)
+                if self.brakeOffset != 0:
+                    self.headerSpeed.setText("[" + str(round(self.brakeOffset/-60, 2)) + "] SPEED")
+                else:
+                    self.headerSpeed.setText("SPEED")
+                self.headerSpeed.update()
             elif e.key() == Qt.Key.Key_S.value:
-                if self.specWidgets[0].currentIndex() == 1:
-                    self.flipPage(0)
-                else:
-                    self.flipPage(1)
-            elif e.key() == Qt.Key.Key_V.value:
-                if self.specWidgets[0].currentIndex() == 3:
-                    self.flipPage(0)
-                else:
-                    self.flipPage(3)
-            elif e.key() == Qt.Key.Key_Question:
-                if self.specWidgets[0].currentIndex() == 2:
+                if self.masterWidget.currentIndex() == 2:
                     self.flipPage(0)
                 else:
                     self.flipPage(2)
+            elif e.key() == Qt.Key.Key_V.value:
+                if self.masterWidget.currentIndex() == 4:
+                    self.flipPage(0)
+                else:
+                    self.flipPage(4)
+            elif e.key() == Qt.Key.Key_T.value:
+                self.statsComponent.updateRunStats(saveRuns=True)
+                self.showUiMsg("Run table saved.", 2)
+            elif e.key() == Qt.Key.Key_Question:
+                if self.masterWidget.currentIndex() == 3:
+                    self.flipPage(0)
+                else:
+                    self.flipPage(3)
             #elif e.key() == Qt.Key.Key_T.value:
                 #tester = Worker(someDelay, "Complete", 0.2)
                 #tester.signals.finished.connect(self.showUiMsg)
                 #self.threadpool.start(tester)
-            else:
-                for c in self.components:
-                    c.keyPressEvent(e)
         elif self.centralWidget() == self.masterWidget and e.modifiers() == Qt.KeyboardModifier.ControlModifier:
             if e.key() >= Qt.Key.Key_1.value and e.key() <= Qt.Key.Key_9.value:
                 self.flipPage(e.key() - Qt.Key.Key_1.value)
 
-    def showUiMsg(self, msg, t, leftAlign=False, waitForKey=False):
-        logPrint("showUiMsg")
-        self.uiMsg.setText(msg)
-        if leftAlign:
-            self.uiMsg.setAlignment(Qt.AlignmentFlag.AlignLeft)
-            self.uiMsg.setMargin(15)
-        else:
-            self.uiMsg.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.uiMsg.setMargin(0)
-        self.masterWidget.setCurrentIndex(1)
-        if waitForKey:
-            self.messageWaitsForKey = True
-        else:
-            self.messageWaitsForKey = False
-            self.returnTimer = QTimer()
-            self.returnTimer.setInterval(int(1000 * t))
-            self.returnTimer.setSingleShot(True)
-            self.returnTimer.timeout.connect(self.returnToDash)
-            self.returnTimer.start()
-
-
     def flipPage(self, nr):
         logPrint("Flip to page", nr)
-        self.specWidgets[0].setCurrentIndex(nr)
+        self.masterWidget.setCurrentIndex(nr)
+        self.masterWidgetIndex = self.masterWidget.currentIndex()
 
     # TODO consider moving to Lap class
     def saveAllLaps(self, name):
@@ -1182,17 +1105,6 @@ class MainWindow(ColorMainWidget):
         self.saveLap(index, name)
 
     # TODO consider moving to Lap class
-    def appendOptimizedLap(self, index, name):
-        if not hasattr(self, 'dev_contLap'):
-            self.dev_contLap = 1
-        else:
-            self.dev_contLap += 1
-        for p in index.points:
-            p.current_lap = self.dev_contLap
-            p.recreatePackage()
-        self.appendLap(index, name)
-
-    # TODO consider moving to Lap class
     def saveLap(self, index, name):
         logPrint("store lap:", name)
         if not os.path.exists(self.cfg.storageLocation):
@@ -1201,29 +1113,6 @@ class MainWindow(ColorMainWidget):
         if len(self.cfg.sessionName) > 0:
             prefix += self.cfg.sessionName + " - "
         with open ( prefix + self.trackPreviouslyIdentified + " - lap - " + name + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S") + ".gt7lap", "wb") as f:
-            if isinstance(index, Lap):
-                lap = index
-            else:
-                lap = self.previousLaps[index]
-            if not lap.preceeding is None:
-                logPrint("Going from", lap.preceeding.current_lap)
-                f.write(lap.preceeding.raw)
-            logPrint("via", lap.points[0].current_lap)
-            for p in lap.points:
-                f.write(p.raw)
-            if not lap.following is None:
-                logPrint("to", lap.following.current_lap)
-                f.write(lap.following.raw)
-
-    # TODO consider moving to Lap class
-    def appendLap(self, index, name):
-        logPrint("append lap:", name)
-        if not os.path.exists(self.cfg.storageLocation):
-            return "Error: Storage location\n'" + self.cfg.storageLocation[self.storageLocation.rfind("/")+1:] + "'\ndoes not exist"
-        prefix = self.cfg.storageLocation + "/"
-        if len(self.cfg.sessionName) > 0:
-            prefix += self.cfg.sessionName + " - "
-        with open ( prefix + self.trackPreviouslyIdentified + " - lap - " + name + ".gt7laps", "ab") as f:
             if isinstance(index, Lap):
                 lap = index
             else:
@@ -1290,48 +1179,23 @@ if __name__ == '__main__':
     app.setOrganizationDomain("pitstop.profittlich.com");
     app.setApplicationName("GT7 SpeedBoard");
 
-    customIP = None
-    fullscreen = True
-    developmentMode = False
-    customLayout = None
+    window = MainWindow()
 
     i = 1
     while i < len(sys.argv):
         if sys.argv[i] == "--ip" and i < len(sys.argv)-1:
-            customIP = sys.argv[i+1]
+            window.startWindow.ip.setText(sys.argv[i+1])
             i+=1
-        elif sys.argv[i] == "--layout" and i < len(sys.argv)-1:
-            customLayout = sys.argv[i+1]
-            i+=1
-        elif sys.argv[i] == "--dev":
-            developmentMode = True
         elif sys.argv[i] == "--no-fs":
-            fullscreen = False
-        elif sys.argv[i] == "--clear-settings":
+            window.goFullscreen = False
+        elif sys.argv[i] == "--clearsettings":
             settings = QSettings()
             settings.clear()
             settings.sync()
             logPrint("Settings cleared")
             sys.exit(0)
-        elif sys.argv[i] == "--list-components":
-            print ("")
-            print ("Available components:")
-            print ("")
-            for i in sb.component.componentLibrary:
-                print(i, " " * (30 - len(i)), sb.component.componentLibrary[i].description())
-            print ("")
-            sys.exit(0)
         i+=1
     
-    window = MainWindow()
-
-    window.goFullscreen = fullscreen
-    window.cfg.developmentMode = developmentMode
-    if not customIP is None:
-        window.startWindow.ip.setText(customIP)
-    if not customLayout is None:
-        window.loadLayout(customLayout)
-
     window.show()
     window.startWindow.ip.setFocus()
 

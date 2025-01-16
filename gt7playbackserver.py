@@ -1,7 +1,7 @@
+from salsa20 import Salsa20_xor
 import traceback
 import datetime
 import threading
-import traceback
 import time
 import socket
 import sys
@@ -157,7 +157,6 @@ class GT7PlaybackServer:
 
             except Exception as e:
                 print('Exception: {}'.format(e))
-                print(traceback.format_exception(e))
         print("Serving stopped.")
 
 class StartWindowPS(QWidget):
@@ -179,7 +178,7 @@ class StartWindowPS(QWidget):
         self.sFps = QDoubleSpinBox()
         self.sFps.setValue(1)
         self.sFps.setMinimum(0.1)
-        self.sFps.setMaximum(20)
+        self.sFps.setMaximum(10)
         self.sFps.setSingleStep(0.1)
         self.sFps.setDecimals(1)
         self.sFps.setSuffix("x")
