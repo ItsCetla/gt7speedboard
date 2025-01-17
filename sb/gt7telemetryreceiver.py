@@ -26,6 +26,8 @@ class GT7TelemetryReceiver:
         self.startRec = False
         self.stopRec = False
         self.ignorePktId = False
+        self.reconnect_delay = 1  # Initial reconnect delay in seconds
+        self.max_reconnect_delay = 30  # Maximum reconnect delay in seconds
 
     def setQueue(self, q):
         self.queue = q
@@ -33,12 +35,36 @@ class GT7TelemetryReceiver:
     def setIgnorePktId(self, b):
         self.ignorePktId = b
 
+    def setup_socket(self):
+        try:
+            if self.s:
+                self.s.close()
+            self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            bindTries = 10
+            while bindTries > 0:
+                try:
+                    self.s.bind(("0.0.0.0", self.ReceivePort))
+                    bindTries = 0
+                except:
+                    self.ReceivePort += 1
+                    bindTries -= 1
+                    if bindTries == 0:
+                        raise
+            self.s.settimeout(2)
+            return True
+        except Exception as e:
+            logPrint(f'Failed to setup socket: {e}')
+            return False
+
     # send heartbeat
     def send_hb(self):
-        send_data = 'A'
-        #logPrint("Send heartbeat to " + self.ip)
-        self.s.sendto(send_data.encode('utf-8'), (self.ip, self.SendPort))
-        #logPrint('send heartbeat')
+        try:
+            send_data = 'A'
+            self.s.sendto(send_data.encode('utf-8'), (self.ip, self.SendPort))
+            return True
+        except Exception as e:
+            logPrint(f'Failed to send heartbeat: {e}')
+            return False
 
     def startRecording(self, sessionName):
         logPrint("Start recording")
@@ -51,17 +77,9 @@ class GT7TelemetryReceiver:
         self.stopRec = True
 
     def runTelemetryReceiver(self):
-        # Create a UDP socket and bind it
-        self.s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        bindTries=10
-        while bindTries > 0:
-            try:
-                self.s.bind(("0.0.0.0", self.ReceivePort))
-                bindTries = 0
-            except:
-                self.ReceivePort += 1
-                bindTries -= 1
-        self.s.settimeout(2)
+        if not self.setup_socket():
+            logPrint("Failed to initialize socket")
+            return
 
         # start by sending heartbeat
         self.send_hb()
@@ -72,7 +90,7 @@ class GT7TelemetryReceiver:
                 if self.startRec:
                     fn = self.sessionName + "recording-" + dt.now().strftime("%Y-%m-%d_%H-%M-%S") + ".gt7"
                     logPrint("record to", fn)
-                    self.record = open (fn, "wb")
+                    self.record = open(fn, "wb")
                     self.startRec = False
                 if self.stopRec:
                     self.stopRec = False
@@ -102,12 +120,36 @@ class GT7TelemetryReceiver:
 
                 newPknt = time.perf_counter()
                 if newPknt - self.pknt > 5:
-                    self.send_hb()
+                    if not self.send_hb():
+                        raise Exception("Failed to send heartbeat")
                     self.pknt = time.perf_counter()
-            except Exception as e:
-                logPrint('Exception in telemetry receiver: {}'.format(e))
-                self.send_hb()
+
+                # Reset reconnect delay on successful communication
+                self.reconnect_delay = 1
+
+            except socket.timeout:
+                logPrint('Connection timed out, attempting to reconnect...')
+                if not self.send_hb():
+                    # If heartbeat fails, try to reconnect
+                    if not self.setup_socket():
+                        time.sleep(self.reconnect_delay)
+                        # Exponential backoff for reconnect delay
+                        self.reconnect_delay = min(self.reconnect_delay * 2, self.max_reconnect_delay)
+                    else:
+                        self.send_hb()
                 self.pknt = time.perf_counter()
 
-        self.s.close()
+            except Exception as e:
+                logPrint(f'Exception in telemetry receiver: {e}')
+                # Try to reconnect on any other error
+                if not self.setup_socket():
+                    time.sleep(self.reconnect_delay)
+                    # Exponential backoff for reconnect delay
+                    self.reconnect_delay = min(self.reconnect_delay * 2, self.max_reconnect_delay)
+                else:
+                    self.send_hb()
+                self.pknt = time.perf_counter()
+
+        if self.s:
+            self.s.close()
 
